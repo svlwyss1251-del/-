@@ -1,20 +1,27 @@
-
-from fastapi import FastAPI, Request, Form
-from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
+from fastapi import FastAPI, Request, Form, Header, HTTPException
+from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 import sqlite3, os
-from datetime import datetime, date
+from datetime import date
 from urllib.parse import urlencode
 from parse import parse_entry
 
+# ───────────────────────── 설정 ─────────────────────────
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
-DB_PATH = os.path.join(APP_DIR, "expense.db")
+
+# 데이터 폴더 생성 + 환경변수 DB_PATH 지원(없으면 data/expense.db)
+os.makedirs(os.path.join(APP_DIR, "data"), exist_ok=True)
+DB_PATH = os.getenv("DB_PATH", os.path.join(APP_DIR, "data", "expense.db"))
+
+# (선택) 수집 API 보안용 키
+INGEST_KEY = os.getenv("INGEST_KEY")
 
 app = FastAPI(title="Expense Tracker (KR)")
 app.mount("/static", StaticFiles(directory=os.path.join(APP_DIR, "static")), name="static")
 templates = Jinja2Templates(directory=os.path.join(APP_DIR, "templates"))
 
+# ──────────────────────── DB 헬퍼 ───────────────────────
 def get_db():
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
@@ -25,19 +32,21 @@ def init_db():
     conn.execute("""
     CREATE TABLE IF NOT EXISTS transactions (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
-        tx_datetime TEXT,
-        yyyy_mm_dd TEXT,
-        merchant TEXT,
-        amount INTEGER,
-        currency TEXT,
+        tx_datetime   TEXT,
+        yyyy_mm_dd    TEXT,
+        merchant      TEXT,
+        amount        INTEGER,
+        currency      TEXT,
         card_or_account TEXT,
-        method TEXT,
-        type TEXT,
-        category TEXT,
-        raw_text TEXT,
-        created_at TEXT DEFAULT CURRENT_TIMESTAMP
+        method        TEXT,
+        type          TEXT,
+        category      TEXT,
+        raw_text      TEXT,
+        created_at    TEXT DEFAULT CURRENT_TIMESTAMP
     )
     """)
+    # 자주 조회하는 열 인덱스
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_tx_date ON transactions(yyyy_mm_dd)")
     conn.commit()
     conn.close()
 
@@ -45,6 +54,12 @@ def init_db():
 def startup_event():
     init_db()
 
+# ──────────────────────── Health ────────────────────────
+@app.get("/health")
+def health():
+    return {"ok": True}
+
+# ──────────────────────── Pages ─────────────────────────
 @app.get("/", response_class=HTMLResponse)
 def home(request: Request, date_str: str | None = None):
     if not date_str:
@@ -58,9 +73,9 @@ def home(request: Request, date_str: str | None = None):
         "SELECT COALESCE(SUM(amount),0) as s FROM transactions WHERE yyyy_mm_dd=?",
         (date_str,)
     ).fetchone()["s"]
-    # category totals
     cat_rows = conn.execute(
-        "SELECT category, COALESCE(SUM(amount),0) as s, COUNT(*) as c FROM transactions WHERE yyyy_mm_dd=? GROUP BY category ORDER BY s DESC",
+        "SELECT category, COALESCE(SUM(amount),0) as s, COUNT(*) as c "
+        "FROM transactions WHERE yyyy_mm_dd=? GROUP BY category ORDER BY s DESC",
         (date_str,)
     ).fetchall()
     conn.close()
@@ -72,40 +87,80 @@ def home(request: Request, date_str: str | None = None):
         "cat_rows": cat_rows,
     })
 
+# ──────────────────────── Ingest (form) ─────────────────
 @app.post("/ingest")
 async def ingest(raw_text: str = Form(...)):
-    # parse and insert
     entry = parse_entry(raw_text)
     conn = get_db()
     conn.execute("""
-        INSERT INTO transactions (tx_datetime, yyyy_mm_dd, merchant, amount, currency, card_or_account, method, type, category, raw_text)
+        INSERT INTO transactions
+        (tx_datetime, yyyy_mm_dd, merchant, amount, currency,
+         card_or_account, method, type, category, raw_text)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     """, (
-        entry["tx_datetime"], entry["yyyy_mm_dd"], entry["merchant"], entry["amount"], entry["currency"],
-        entry["card_or_account"], entry["method"], entry["type"], entry["category"], entry["raw_text"]
+        entry["tx_datetime"], entry["yyyy_mm_dd"], entry["merchant"], entry["amount"],
+        entry["currency"], entry["card_or_account"], entry["method"],
+        entry["type"], entry["category"], entry["raw_text"]
     ))
     conn.commit()
     conn.close()
-    # redirect to the date view
     q = urlencode({"date_str": entry["yyyy_mm_dd"]})
     return RedirectResponse(url=f"/?{q}", status_code=303)
 
+# ──────────────────────── Ingest (JSON) ─────────────────
 @app.post("/ingest-json")
-async def ingest_json(payload: dict):
+async def ingest_json(payload: dict, x_ingest_key: str | None = Header(None)):
+    if INGEST_KEY and x_ingest_key != INGEST_KEY:
+        raise HTTPException(status_code=401, detail="Unauthorized")
     raw_text = payload.get("raw_text", "")
     entry = parse_entry(raw_text)
     conn = get_db()
     conn.execute("""
-        INSERT INTO transactions (tx_datetime, yyyy_mm_dd, merchant, amount, currency, card_or_account, method, type, category, raw_text)
+        INSERT INTO transactions
+        (tx_datetime, yyyy_mm_dd, merchant, amount, currency,
+         card_or_account, method, type, category, raw_text)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     """, (
-        entry["tx_datetime"], entry["yyyy_mm_dd"], entry["merchant"], entry["amount"], entry["currency"],
-        entry["card_or_account"], entry["method"], entry["type"], entry["category"], entry["raw_text"]
+        entry["tx_datetime"], entry["yyyy_mm_dd"], entry["merchant"], entry["amount"],
+        entry["currency"], entry["card_or_account"], entry["method"],
+        entry["type"], entry["category"], entry["raw_text"]
     ))
     conn.commit()
     conn.close()
     return JSONResponse({"ok": True, "entry": entry})
 
+# ───────────── Ingest (text/plain; MacroDroid/Tasker) ─────────────
+@app.post("/ingest-text", response_class=JSONResponse)
+async def ingest_text(body: str, x_ingest_key: str | None = Header(None)):
+    """
+    헤더: Content-Type: text/plain
+          (옵션) x-ingest-key: <INGEST_KEY>
+    바디: 알림 원문 문자열
+    """
+    if INGEST_KEY and x_ingest_key != INGEST_KEY:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+    raw_text = body.strip()
+    if not raw_text:
+        raise HTTPException(status_code=400, detail="Empty body")
+
+    entry = parse_entry(raw_text)
+    conn = get_db()
+    conn.execute("""
+        INSERT INTO transactions
+        (tx_datetime, yyyy_mm_dd, merchant, amount, currency,
+         card_or_account, method, type, category, raw_text)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    """, (
+        entry["tx_datetime"], entry["yyyy_mm_dd"], entry["merchant"], entry["amount"],
+        entry["currency"], entry["card_or_account"], entry["method"],
+        entry["type"], entry["category"], entry["raw_text"]
+    ))
+    conn.commit()
+    conn.close()
+    return {"ok": True, "added": 1, "date": entry["yyyy_mm_dd"]}
+
+# ──────────────────────── 샘플 시드 ─────────────────────
 @app.get("/seed")
 def seed():
     samples = [
@@ -117,10 +172,11 @@ def seed():
     ]
     conn = get_db()
     for s in samples:
-        from parse import parse_entry
         e = parse_entry(s)
         conn.execute("""
-        INSERT INTO transactions (tx_datetime, yyyy_mm_dd, merchant, amount, currency, card_or_account, method, type, category, raw_text)
+        INSERT INTO transactions
+        (tx_datetime, yyyy_mm_dd, merchant, amount, currency,
+         card_or_account, method, type, category, raw_text)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             e["tx_datetime"], e["yyyy_mm_dd"], e["merchant"], e["amount"], e["currency"],
