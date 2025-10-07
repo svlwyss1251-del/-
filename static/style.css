@@ -1,0 +1,29 @@
+
+* { box-sizing: border-box; }
+body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Noto Sans KR", Arial, sans-serif; margin: 0; background: #f6f7fb; color: #222; }
+.container { max-width: 900px; margin: 0 auto; padding: 20px; }
+header { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+h1 { margin: 0; font-size: 24px; }
+header form { display: flex; gap: 8px; align-items: center; }
+input[type="date"], button { padding: 8px 12px; border-radius: 8px; border: 1px solid #d9dbe0; background: #fff; }
+button { cursor: pointer; }
+
+.summary { display: grid; grid-template-columns: 1fr 2fr; gap: 16px; margin-top: 16px; }
+.card { background: #fff; border: 1px solid #e6e8ef; padding: 16px; border-radius: 12px; }
+.card-title { font-size: 13px; color: #666; }
+.card-value { font-size: 28px; font-weight: 700; margin-top: 6px; }
+
+.pill-list { list-style: none; padding: 0; margin: 8px 0 0 0; display: flex; flex-wrap: wrap; gap: 8px; }
+.pill { background: #f0f2f7; padding: 8px 10px; border-radius: 999px; display: flex; gap: 8px; align-items: center; }
+.pill-name { font-weight: 600; }
+.pill-value { color: #444; }
+
+.ingest { margin-top: 24px; }
+.ingest textarea { width: 100%; height: 90px; padding: 12px; border: 1px solid #d9dbe0; border-radius: 10px; resize: vertical; }
+.ingest button { margin-top: 8px; }
+
+.list { margin-top: 16px; }
+table { width: 100%; border-collapse: collapse; background: #fff; border: 1px solid #e6e8ef; border-radius: 12px; overflow: hidden; }
+th, td { padding: 10px 12px; border-bottom: 1px solid #eef0f5; text-align: left; }
+th { background: #fafbfe; color: #555; font-weight: 600; }
+td.neg { color: #c1121f; font-weight: 600; }

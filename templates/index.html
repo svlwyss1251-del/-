@@ -1,0 +1,81 @@
+
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>가계부 - 일일 요약</title>
+  <link rel="stylesheet" href="/static/style.css"/>
+  <link rel="manifest" href="/static/manifest.json">
+  <script>
+  if ('serviceWorker' in navigator) {
+    window.addEventListener('load', () => navigator.serviceWorker.register('/static/sw.js'));
+  }
+  </script>
+</head>
+<body>
+  <div class="container">
+    <header>
+      <h1>가계부 (일일 보기)</h1>
+      <form method="get" action="/">
+        <label for="date">날짜</label>
+        <input type="date" id="date" name="date_str" value="{{ date_str }}"/>
+        <button type="submit">보기</button>
+      </form>
+    </header>
+
+    <section class="summary">
+      <div class="card">
+        <div class="card-title">총 지출(원)</div>
+        <div class="card-value">{{ "{:,}".format(total) }}</div>
+      </div>
+      <div class="card">
+        <div class="card-title">카테고리 합계</div>
+        <ul class="pill-list">
+          {% for cat in cat_rows %}
+            <li class="pill">
+              <span class="pill-name">{{ cat["category"] or "미분류" }}</span>
+              <span class="pill-value">{{ "{:,}".format(cat["s"]) }}원 / {{ cat["c"] }}건</span>
+            </li>
+          {% endfor %}
+        </ul>
+      </div>
+    </section>
+
+    <section class="ingest">
+      <h2>빠른 입력(문자/알림 원문 붙여넣기)</h2>
+      <form method="post" action="/ingest">
+        <textarea name="raw_text" placeholder="[현대카드] 10/07 13:45 12,300원 일시불 CU당산점 승인" required></textarea>
+        <button type="submit">파싱하여 추가</button>
+      </form>
+    </section>
+
+    <section class="list">
+      <h2>{{ date_str }} 결제 내역</h2>
+      {% if rows %}
+      <table>
+        <thead>
+          <tr>
+            <th>시간</th><th>가맹점</th><th>금액</th><th>카테고리</th><th>카드</th><th>타입</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for r in rows %}
+          <tr>
+            <td>{{ r["tx_datetime"][11:16] if r["tx_datetime"] else "" }}</td>
+            <td>{{ r["merchant"] }}</td>
+            <td class="{{ 'neg' if r['amount'] < 0 else '' }}">{{ "{:,}".format(r["amount"]) }}</td>
+            <td>{{ r["category"] or "" }}</td>
+            <td>{{ r["card_or_account"] or "" }}</td>
+            <td>{{ r["type"] }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      {% else %}
+        <p>내역이 없습니다. 위 입력창에 승인문자를 붙여넣어 보세요.</p>
+      {% endif %}
+    </section>
+  </div>
+</body>
+</html>
